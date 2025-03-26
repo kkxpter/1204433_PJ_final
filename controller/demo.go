@@ -174,6 +174,7 @@ func getCustomers(c *gin.Context) {
 func ProductController(router *gin.Engine) {
 	router.GET("/search-products", searchProducts) // ค้นหาสินค้า
 	router.POST("/add-to-cart", addToCart)         // เพิ่มสินค้าลงในรถเข็น
+	router.GET("/view-carts", viewCarts)           // เพิ่มเส้นทางดูรถเข็นทั้งหมดของลูกค้า
 }
 
 // ฟังก์ชันสำหรับค้นหาสินค้าตามรายละเอียดและช่วงราคา
@@ -205,7 +206,6 @@ func searchProducts(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"products": products})
 }
 
-// ฟังก์ชันสำหรับเพิ่มสินค้าลงในรถเข็น
 func addToCart(c *gin.Context) {
 	var cartData struct {
 		CustomerID int    `json:"customer_id"`
@@ -218,6 +218,11 @@ func addToCart(c *gin.Context) {
 	if err := c.ShouldBindJSON(&cartData); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
 		return
+	}
+
+	// ถ้า CartName ไม่มีการระบุ ให้กำหนดเป็น default หรือชื่ออื่นๆ ที่เหมาะสม
+	if cartData.CartName == "" {
+		cartData.CartName = "default" // ใช้ชื่อ default หากไม่ได้กรอกชื่อรถเข็น
 	}
 
 	// ค้นหารถเข็นที่มีอยู่หรือสร้างใหม่
@@ -259,4 +264,69 @@ func addToCart(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Product added to cart", "cart_item": newCartItem})
+}
+
+// ฟังก์ชันสำหรับดูรถเข็นทั้งหมดของลูกค้า
+func viewCarts(c *gin.Context) {
+	// รับ customer_id จากพารามิเตอร์
+	customerIDStr := c.DefaultQuery("customer_id", "")
+	customerID, err := strconv.Atoi(customerIDStr)
+	if err != nil || customerID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid customer ID"})
+		return
+	}
+
+	// ค้นหารถเข็นทั้งหมดของลูกค้าคนนั้น
+	var carts []model.Cart
+	if err := dbconn.DB.Where("customer_id = ?", customerID).Find(&carts).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve carts"})
+		return
+	}
+
+	// เตรียมผลลัพธ์ที่จะส่งกลับ
+	var cartDetails []gin.H
+
+	// ลูปผ่านรถเข็นทั้งหมด
+	for _, cart := range carts {
+		// ค้นหาสินค้าในรถเข็นนี้
+		var cartItems []model.CartItem
+		if err := dbconn.DB.Where("cart_id = ?", cart.CartID).Find(&cartItems).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve cart items"})
+			return
+		}
+
+		// เตรียมข้อมูลสำหรับการแสดงผล
+		var itemsDetails []gin.H
+
+		// ลูปผ่านแต่ละรายการในรถเข็น
+		for _, cartItem := range cartItems {
+			// ค้นหาข้อมูลสินค้าจาก product_id
+			var product model.Product
+			if err := dbconn.DB.Where("product_id = ?", cartItem.ProductID).First(&product).Error; err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Could not retrieve product"})
+				return
+			}
+
+			// เพิ่มข้อมูลสินค้าในรถเข็น
+			itemsDetails = append(itemsDetails, gin.H{
+				"product_id":     product.ProductID,
+				"product_name":   product.ProductName,
+				"quantity":       cartItem.Quantity,
+				"price_per_unit": product.Price,
+			})
+		}
+
+		// เพิ่มข้อมูลรถเข็นพร้อมรายละเอียดสินค้า
+		cartDetails = append(cartDetails, gin.H{
+			"cart_id":   cart.CartID,
+			"cart_name": cart.CartName,
+			"items":     itemsDetails,
+		})
+	}
+
+	// ส่งข้อมูลรถเข็นทั้งหมดกลับไป
+	c.JSON(http.StatusOK, gin.H{
+		"customer_id": customerID,
+		"carts":       cartDetails,
+	})
 }
