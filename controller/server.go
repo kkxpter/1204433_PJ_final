@@ -3,8 +3,10 @@ package controller
 import "github.com/gin-gonic/gin"
 
 func StartServer() {
+	// gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	UserController(router)
-	router.Run()
+	ProductController(router)
+	router.Run(":8081")
 }
