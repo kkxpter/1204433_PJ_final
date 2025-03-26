@@ -14,6 +14,7 @@ func UserController(router *gin.Engine) {
 	router.GET("/customers", getCustomers)
 	router.POST("/login", login) // เพิ่มเส้นทาง /login
 	router.POST("/register", register)
+	router.POST("/changepass", changePassword)
 }
 
 func ping(c *gin.Context) {
@@ -115,6 +116,49 @@ func register(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"message": "Registration successful", "customer": newCustomer})
+}
+
+func changePassword(c *gin.Context) {
+	var passwordData struct {
+		Email       string `json:"email"`
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+
+	// อ่านข้อมูลจาก request
+	if err := c.ShouldBindJSON(&passwordData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	// ค้นหาลูกค้าจาก email
+	var customer model.Customer
+	if err := dbconn.DB.Where("email = ?", passwordData.Email).First(&customer).Error; err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password"})
+		return
+	}
+
+	// ตรวจสอบ old_password กับ hashed password ในฐานข้อมูล
+	if err := bcrypt.CompareHashAndPassword([]byte(customer.Password), []byte(passwordData.OldPassword)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Old password is incorrect"})
+		return
+	}
+
+	// แฮชรหัสผ่านใหม่
+	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(passwordData.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash new password"})
+		return
+	}
+
+	// อัปเดตรหัสผ่านใหม่ในฐานข้อมูล
+	customer.Password = string(hashedNewPassword)
+	if err := dbconn.DB.Save(&customer).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update password"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
 }
 
 func getCustomers(c *gin.Context) {
